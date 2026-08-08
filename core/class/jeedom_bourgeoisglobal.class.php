@@ -36,14 +36,20 @@ class jeedom_bourgeoisglobal extends eqLogic {
         log::add('jeedom_bourgeoisglobal', 'debug', 'Token OK.');
 
         // 2. Requête API de statut
-        $apiUrl = $this->getConfiguration('api_base_url', 'https://global.hoymiles.com');
+        $apiUrl = $this->getConfiguration('api_base_url', 'https://app.bourgeoisglobal.fr');
         $statusUrl = rtrim($apiUrl, '/') . '/platform/api/gateway/pvm/station_select_status';
         
         log::add('jeedom_bourgeoisglobal', 'debug', 'Interrogation de l\'API : ' . $statusUrl);
 
-        $payload = json_encode(array(
+        // Construction du payload avec toutes les variantes de clés d'identification possibles
+        $payloadArray = array(
             'station_id' => $stationId
-        ));
+        );
+        if (!empty($stationId)) {
+            $payloadArray['swaggerId'] = $stationId;
+            $payloadArray['id'] = $stationId;
+        }
+        $payload = json_encode($payloadArray);
 
         $ch = curl_init($statusUrl);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -100,7 +106,7 @@ class jeedom_bourgeoisglobal extends eqLogic {
 
         log::add('jeedom_bourgeoisglobal', 'info', '--> Aucun Token valide en cache. Nouvelle demande d\'authentification en cours...');
         
-        $apiUrl = $this->getConfiguration('api_base_url', 'https://global.hoymiles.com');
+        $apiUrl = $this->getConfiguration('api_base_url', 'https://app.bourgeoisglobal.fr');
         $loginUrl = rtrim($apiUrl, '/') . '/platform/api/gateway/iam/auth_login'; 
         
         log::add('jeedom_bourgeoisglobal', 'debug', 'URL de connexion testée : ' . $loginUrl);
