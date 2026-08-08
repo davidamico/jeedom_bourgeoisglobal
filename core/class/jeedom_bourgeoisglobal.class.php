@@ -14,7 +14,6 @@ class jeedom_bourgeoisglobal extends eqLogic {
     }
 
     public function refresh() {
-        // --- LOG : DÉBUT DU REFRESH ---
         log::add('jeedom_bourgeoisglobal', 'info', '=======================================================');
         log::add('jeedom_bourgeoisglobal', 'info', 'Début du rafraîchissement pour : ' . $this->getHumanName());
 
@@ -36,7 +35,7 @@ class jeedom_bourgeoisglobal extends eqLogic {
         }
         log::add('jeedom_bourgeoisglobal', 'debug', 'Token OK.');
 
-        // 2. Requête API
+        // 2. Requête API avec cURL natif
         log::add('jeedom_bourgeoisglobal', 'debug', '2. Interrogation de l\'API Bourgeois Global / Hoymiles...');
         $url = 'https://global.hoymiles.com/platform/api/gateway/pvm/station_select_status';
         
@@ -44,30 +43,32 @@ class jeedom_bourgeoisglobal extends eqLogic {
             'station_id' => $stationId
         ));
 
-        $headers = array(
-            'Cookie: WX-TOKEN=' . $token,
-            'Content-Type: application/json;charset=UTF-8'
-        );
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+            'Content-Type: application/json;charset=UTF-8',
+            'Cookie: WX-TOKEN=' . $token
+        ));
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
 
-        $request = new com_http($url);
-        $request->setHeaders($headers);
-        $request->setPost($payload);
-        $request->setNoSslCheck(true);
-        $request->setTimeout(15);
-        $response = $request->exec();
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
 
-        if (empty($response)) {
-            log::add('jeedom_bourgeoisglobal', 'error', 'Réponse vide du serveur API.');
+        if (empty($response) || $httpCode != 200) {
+            log::add('jeedom_bourgeoisglobal', 'error', 'Erreur API - Code HTTP : ' . $httpCode . ' Réponse : ' . $response);
             return;
         }
 
         $data = json_decode($response, true);
-        
-        // --- LOG : AFFICHAGE DU JSON BRUT (Uniquement en mode Debug) ---
         log::add('jeedom_bourgeoisglobal', 'debug', 'Réponse JSON brute : ' . print_r($data, true));
 
         if (!is_array($data) || !isset($data['data'])) {
-            log::add('jeedom_bourgeoisglobal', 'error', 'Format de données inattendu ou erreur serveur.');
+            log::add('jeedom_bourgeoisglobal', 'error', 'Format de données inattendu reçu du serveur.');
             return;
         }
 
@@ -84,7 +85,6 @@ class jeedom_bourgeoisglobal extends eqLogic {
         $this->checkAndUpdateCmd('energy_day', $energyDayKwh, $formattedDate);
         $this->checkAndUpdateCmd('energy_total', $energyTotalKwh, $formattedDate);
 
-        // --- LOG : FIN ---
         log::add('jeedom_bourgeoisglobal', 'info', sprintf('Succès : Puissance = %s W | Prod. Jour = %s kWh', $powerW, $energyDayKwh));
     }
 
@@ -105,30 +105,33 @@ class jeedom_bourgeoisglobal extends eqLogic {
             'password' => md5($_password)
         ));
 
-        $headers = array('Content-Type: application/json;charset=UTF-8');
+        $ch = curl_init($loginUrl);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type: application/json;charset=UTF-8'));
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
 
-        $request = new com_http($loginUrl);
-        $request->setHeaders($headers);
-        $request->setPost($payload);
-        $request->setNoSslCheck(true);
-        $request->setTimeout(10);
-        $response = $request->exec();
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
 
         $data = json_decode($response, true);
 
-        if (isset($data['data']['token']) && !empty($data['data']['token'])) {
+        if ($httpCode == 200 && isset($data['data']['token']) && !empty($data['data']['token'])) {
             $token = $data['data']['token'];
             cache::set($cacheKey, $token, 86000); // Valide 24h
             log::add('jeedom_bourgeoisglobal', 'debug', '--> Nouveau Token obtenu et mis en cache avec succès.');
             return $token;
         }
 
-        log::add('jeedom_bourgeoisglobal', 'error', '--> Échec de l\'authentification ! Réponse API : ' . $response);
+        log::add('jeedom_bourgeoisglobal', 'error', '--> Échec de l\'authentification ! Code HTTP : ' . $httpCode . ' Réponse : ' . $response);
         return false;
     }
 
     public function postSave() {
-        // [Le reste du code de création des commandes reste identique...]
         $powerCmd = $this->getCmd(null, 'power_w');
         if (!is_object($powerCmd)) {
             $powerCmd = new jeedom_bourgeoisglobalCmd();
