@@ -27,6 +27,11 @@ class jeedom_bourgeoisglobal extends eqLogic {
             return;
         }
 
+        if (empty($stationId)) {
+            log::add('jeedom_bourgeoisglobal', 'error', 'ID de station manquant. Veuillez renseigner 12078440 dans la configuration de l\'équipement.');
+            return;
+        }
+
         // 1. Récupération du Token
         log::add('jeedom_bourgeoisglobal', 'debug', '1. Vérification du Token d\'accès...');
         $token = $this->getApiToken($username, $password, $apiUrl);
@@ -36,19 +41,14 @@ class jeedom_bourgeoisglobal extends eqLogic {
         }
         log::add('jeedom_bourgeoisglobal', 'debug', 'Token OK.');
 
-        // 2. Si aucun ID de station n'est renseigné, on demande la liste des stations du compte
-        if (empty($stationId)) {
-            log::add('jeedom_bourgeoisglobal', 'info', 'Aucun ID de station renseigné. Récupération de la liste de vos installations...');
-            $this->fetchAndLogStations($token, $apiUrl);
-            return;
-        }
-
-        // 3. Requête API de statut avec le swaggerId
+        // 2. Requête API de statut avec l'ID complet sous toutes les variantes de clés
         $statusUrl = rtrim($apiUrl, '/') . '/platform/api/gateway/pvm/station_select_status';
-        log::add('jeedom_bourgeoisglobal', 'debug', 'Interrogation de l\'API pour le swaggerId : ' . $stationId);
+        log::add('jeedom_bourgeoisglobal', 'debug', 'Interrogation de l\'API pour l\'ID : ' . $stationId);
 
         $payload = json_encode(array(
-            'swaggerId' => $stationId
+            'id' => $stationId,
+            'swaggerId' => $stationId,
+            'station_id' => $stationId
         ));
 
         $ch = curl_init($statusUrl);
@@ -80,52 +80,19 @@ class jeedom_bourgeoisglobal extends eqLogic {
             return;
         }
 
-        // 4. Extraction des valeurs
+        // 3. Extraction des valeurs
         $powerW = isset($data['data']['real_power']) ? floatval($data['data']['real_power']) : 0;
         $energyDayKwh = isset($data['data']['daily_eq']) ? floatval($data['data']['daily_eq']) : 0;
         $energyTotalKwh = isset($data['data']['total_eq']) ? floatval($data['data']['total_eq']) : 0;
 
         $formattedDate = date('Y-m-d H:i:s');
 
-        // 5. Mise à jour des commandes
+        // 4. Mise à jour des commandes
         $this->checkAndUpdateCmd('power_w', $powerW, $formattedDate);
         $this->checkAndUpdateCmd('energy_day', $energyDayKwh, $formattedDate);
         $this->checkAndUpdateCmd('energy_total', $energyTotalKwh, $formattedDate);
 
         log::add('jeedom_bourgeoisglobal', 'info', sprintf('Succès : Puissance = %s W | Prod. Jour = %s kWh', $powerW, $energyDayKwh));
-    }
-
-    private function fetchAndLogStations($_token, $_apiUrl) {
-        // Tentative d'interrogation de l'endpoint de liste des stations
-        $listEndpoints = array(
-            '/platform/api/gateway/pvm/station_list',
-            '/platform/api/gateway/pvm/station_page',
-            '/platform/api/gateway/pvm/user_station_list'
-        );
-
-        foreach ($listEndpoints as $endpoint) {
-            $url = rtrim($_apiUrl, '/') . $endpoint;
-            log::add('jeedom_bourgeoisglobal', 'info', 'Test de l\'endpoint de liste : ' . $url);
-
-            $ch = curl_init($url);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");
-            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(array()));
-            curl_setopt($ch, CURLOPT_HTTPHEADER, array(
-                'Content-Type: application/json;charset=UTF-8',
-                'Cookie: WX-TOKEN=' . $_token
-            ));
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-
-            $response = curl_exec($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
-
-            log::add('jeedom_bourgeoisglobal', 'info', 'Code HTTP : ' . $httpCode . ' | Réponse : ' . $response);
-        }
-        log::add('jeedom_bourgeoisglobal', 'info', 'Veuillez consulter les lignes ci-dessus pour retrouver votre swaggerId / stationId, puis renseignez-le dans la configuration de l\'équipement.');
     }
 
     private function getApiToken($_username, $_password, $_apiUrl) {
