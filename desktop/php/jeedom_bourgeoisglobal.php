@@ -118,7 +118,7 @@ $eqLogics = eqLogic::byType($plugin->getId());
                         </div>
 
                         <hr>
-                        <legend><i class="fas fa-key"></i> {{Paramètres de connexion Bourgeois Global / Hoymiles}}</legend>
+                        <legend><i class="fas fa-key"></i> {{Paramètres de connexion et API}}</legend>
 
                         <div class="form-group">
                             <label class="col-sm-3 control-label">{{Identifiant / Email Cloud}}</label>
@@ -139,6 +139,14 @@ $eqLogics = eqLogic::byType($plugin->getId());
                             <div class="col-sm-4">
                                 <input type="text" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="station_id" placeholder="Ex: 123456 (Optionnel)"/>
                                 <span class="help-block"><small>{{Laissez vide si vous n'avez qu'une seule installation sur votre compte}}</small></span>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="col-sm-3 control-label">{{URL de base de l'API}}</label>
+                            <div class="col-sm-4">
+                                <input type="text" class="eqLogicAttr form-control" data-l1key="configuration" data-l2key="api_base_url" placeholder="https://global.hoymiles.com"/>
+                                <span class="help-block"><small>{{Laissez par défaut ou modifiez selon le domaine de votre portail cloud}}</small></span>
                             </div>
                         </div>
                     </fieldset>
