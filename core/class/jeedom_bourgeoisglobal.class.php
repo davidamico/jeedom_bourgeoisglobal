@@ -1,5 +1,5 @@
 <?php
-/* * Plugin Jeedom Bourgeois Global Photovoltaïque
+/* * Plugin Jeedom Bourgeois Global (Hoymiles)
  * Licence GNU AGPLv3
  */
 
@@ -11,9 +11,6 @@ class jeedom_bourgeoisglobal extends eqLogic {
      * PLANIFICATION (CRON)
      * ========================================================================= */
 
-    /**
-     * Exécuté automatiquement toutes les 15 minutes par le moteur Jeedom
-     */
     public static function cron15() {
         foreach (self::byType('jeedom_bourgeoisglobal', true) as $eqLogic) {
             $eqLogic->refresh();
@@ -24,13 +21,10 @@ class jeedom_bourgeoisglobal extends eqLogic {
      * MÉTHODES PRINCIPALES DE L'ÉQUIPEMENT
      * ========================================================================= */
 
-    /**
-     * Récupère les données depuis l'API Cloud Bourgeois Global et met à jour Jeedom
-     */
     public function refresh() {
         $username = $this->getConfiguration('username');
         $password = $this->getConfiguration('password');
-        $stationId = $this->getConfiguration('station_id'); // ID de la centrale si requis
+        $stationId = $this->getConfiguration('station_id'); // Optionnel, si vous ciblez une station précise
 
         if (empty($username) || empty($password)) {
             log::add('jeedom_bourgeoisglobal', 'warning', sprintf(__('Identifiants non configurés pour l\'équipement %s', __FILE__), $this->getHumanName()));
@@ -45,20 +39,23 @@ class jeedom_bourgeoisglobal extends eqLogic {
         }
 
         // 2. Interrogation de l'endpoint des métriques de la centrale solaire
-        $url = 'https://api.bourgeoisglobal.com/v1/plant/data'; // Adaptez l'URL selon l'API exacte (Horus / S-Miles)
-        if (!empty($stationId)) {
-            $url .= '?plant_id=' . urlencode($stationId);
-        }
+        $url = 'https://global.hoymiles.com/platform/api/gateway/pvm/station_select_status';
+        
+        $payload = json_encode(array(
+            'station_id' => $stationId
+        ));
 
+        // Le cloud Hoymiles exige le token dans le Cookie
         $headers = array(
-            'Authorization: Bearer ' . $token,
-            'Content-Type: application/json'
+            'Cookie: WX-TOKEN=' . $token,
+            'Content-Type: application/json;charset=UTF-8'
         );
 
         $request = new com_http($url);
         $request->setHeaders($headers);
+        $request->setPost($payload); // Utilisation d'un POST comme l'exige l'API Hoymiles
         $request->setNoSslCheck(true);
-        $request->setTimeout(10);
+        $request->setTimeout(15);
         $response = $request->exec();
 
         if (empty($response)) {
@@ -67,24 +64,29 @@ class jeedom_bourgeoisglobal extends eqLogic {
         }
 
         $data = json_decode($response, true);
-        if (!is_array($data)) {
-            log::add('jeedom_bourgeoisglobal', 'error', sprintf(__('Format JSON invalide reçu pour %s', __FILE__), $this->getHumanName()));
+        if (!is_array($data) || !isset($data['data'])) {
+            log::add('jeedom_bourgeoisglobal', 'error', sprintf(__('Format JSON invalide ou données manquantes reçu pour %s : %s', __FILE__), $this->getHumanName(), $response));
             return;
         }
 
         log::add('jeedom_bourgeoisglobal', 'debug', 'Données API reçues : ' . print_r($data, true));
 
-        // 3. Extraction des valeurs principales
-        $powerW = isset($data['current_power_w']) ? floatval($data['current_power_w']) : 0;
-        $energyDayKwh = isset($data['today_energy_kwh']) ? floatval($data['today_energy_kwh']) : 0;
-        $energyTotalKwh = isset($data['total_energy_kwh']) ? floatval($data['total_energy_kwh']) : 0;
+        // 3. Extraction des valeurs (à adapter selon les clés exactes renvoyées par le JSON d'Hoymiles)
+        // Les noms de variables ci-dessous (real_power, daily_eq, total_eq) sont des exemples courants de l'API Hoymiles
+        $powerW = isset($data['data']['real_power']) ? floatval($data['data']['real_power']) : 0;
+        $energyDayKwh = isset($data['data']['daily_eq']) ? floatval($data['data']['daily_eq']) : 0;
+        $energyTotalKwh = isset($data['data']['total_eq']) ? floatval($data['data']['total_eq']) : 0;
 
         // 4. Gestion de la date et du fuseau horaire (Conversion UTC -> Heure locale Jeedom)
-        $timestamp = isset($data['updated_at']) ? $data['updated_at'] : 'now';
+        $timestamp = isset($data['data']['update_time']) ? $data['data']['update_time'] : 'now';
         try {
-            $date = new DateTime($timestamp, new DateTimeZone('UTC'));
-            $date->setTimezone(new DateTimeZone(date_default_timezone_get()));
-            $formattedDate = $date->format('Y-m-d H:i:s');
+            // L'API Hoymiles renvoie souvent l'heure locale de la station, si c'est de l'UTC, décommentez la conversion :
+            // $date = new DateTime($timestamp, new DateTimeZone('UTC'));
+            // $date->setTimezone(new DateTimeZone(date_default_timezone_get()));
+            // $formattedDate = $date->format('Y-m-d H:i:s');
+            
+            // On prend par défaut la date du système au moment du refresh pour simplifier
+            $formattedDate = date('Y-m-d H:i:s');
         } catch (Exception $e) {
             $formattedDate = date('Y-m-d H:i:s');
         }
@@ -98,12 +100,9 @@ class jeedom_bourgeoisglobal extends eqLogic {
     }
 
     /* =========================================================================
-     * GESTION DE L'AUTHENTIFICATION & DU TOKEN
+     * GESTION DE L'AUTHENTIFICATION & DU TOKEN (API HOYMILES)
      * ========================================================================= */
 
-    /**
-     * Obtient un Token d'accès en cache ou effectue une reconnexion
-     */
     private function getApiToken($_username, $_password) {
         $cacheKey = 'jeedom_bourgeoisglobal_token_' . md5($_username);
         $cachedToken = cache::byKey($cacheKey)->getValue(null);
@@ -112,14 +111,15 @@ class jeedom_bourgeoisglobal extends eqLogic {
             return $cachedToken;
         }
 
-        // Authentification HTTP POST auprès du serveur Cloud
-        $loginUrl = 'https://api.bourgeoisglobal.com/v1/auth/login'; // Adaptez l'URL de login
+        // Authentification HTTP POST auprès du serveur S-Miles Cloud
+        $loginUrl = 'https://global.hoymiles.com/platform/api/gateway/iam/auth_login'; 
+        
         $payload = json_encode(array(
-            'username' => $_username,
-            'password' => $_password
+            'user_name' => $_username,
+            'password' => md5($_password) // Hachage MD5 requis par l'API
         ));
 
-        $headers = array('Content-Type: application/json');
+        $headers = array('Content-Type: application/json;charset=UTF-8');
 
         $request = new com_http($loginUrl);
         $request->setHeaders($headers);
@@ -130,26 +130,23 @@ class jeedom_bourgeoisglobal extends eqLogic {
 
         $data = json_decode($response, true);
 
-        if (isset($data['token']) && !empty($data['token'])) {
-            $token = $data['token'];
-            $expiresIn = isset($data['expires_in']) ? intval($data['expires_in']) - 60 : 3500;
+        // Extraction du token (Généralement placé dans data -> token chez Hoymiles)
+        if (isset($data['data']['token']) && !empty($data['data']['token'])) {
+            $token = $data['data']['token'];
+            $expiresIn = 86400; // Conservation 24h par défaut en cache
             
-            // Stockage dans le cache natif Jeedom
-            cache::set($cacheKey, $token, $expiresIn);
+            cache::set($cacheKey, $token, $expiresIn - 60);
             return $token;
         }
 
-        log::add('jeedom_bourgeoisglobal', 'error', 'Échec de la connexion à l\'API Bourgeois Global : ' . $response);
+        log::add('jeedom_bourgeoisglobal', 'error', 'Échec de la connexion S-Miles Cloud. Réponse : ' . $response);
         return false;
     }
 
     /* =========================================================================
-     * CRÉATION AUTOMATIQUE DES COMMANDES (CYCLE DE VIE)
+     * CRÉATION AUTOMATIQUE DES COMMANDES
      * ========================================================================= */
 
-    /**
-     * Exécuté automatiquement lors de la sauvegarde de l'équipement
-     */
     public function postSave() {
         // 1. Commande Info : Puissance instantanée (W)
         $powerCmd = $this->getCmd(null, 'power_w');
@@ -213,9 +210,6 @@ class jeedom_bourgeoisglobal extends eqLogic {
 
 class jeedom_bourgeoisglobalCmd extends cmd {
     
-    /**
-     * Exécution des commandes d'action (bouton Rafraîchir)
-     */
     public function execute($_options = array()) {
         $eqLogic = $this->getEqLogic();
         if ($this->getLogicalId() == 'refresh') {
