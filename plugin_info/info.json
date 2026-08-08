@@ -1,1 +1,15 @@
-
+{
+  "id": "jeedom_bourgeoisglobal",
+  "name": "Bourgeois Global Photovoltaïque",
+  "description": "Plugin pour la récupération des données de production de vos panneaux et micro-onduleurs Bourgeois Global.",
+  "licence": "AGPL-3.0",
+  "author": "TheDave",
+  "require": "4.4",
+  "category": "energy",
+  "hasDependency": false,
+  "hasOwnDeamon": false,
+  "maxJeedomVersion": "4.5",
+  "changelog": "https://davidamico.github.io/jeedom_bourgeoisglobal/fr_FR/changelog",
+  "documentation": "https://davidamico.github.io/jeedom_bourgeoisglobal/fr_FR/index",
+  "language": ["fr_FR"]
+}
