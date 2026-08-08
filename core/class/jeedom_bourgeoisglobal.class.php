@@ -19,7 +19,7 @@ class jeedom_bourgeoisglobal extends eqLogic {
 
         $username = $this->getConfiguration('username');
         $password = $this->getConfiguration('password');
-        $stationId = $this->getConfiguration('station_id'); 
+        $stationId = $this->getConfiguration('station_id', '12078440'); 
         $apiUrl = $this->getConfiguration('api_base_url', 'https://app.bourgeoisglobal.fr');
 
         if (empty($username) || empty($password)) {
@@ -27,28 +27,21 @@ class jeedom_bourgeoisglobal extends eqLogic {
             return;
         }
 
-        if (empty($stationId)) {
-            log::add('jeedom_bourgeoisglobal', 'error', 'ID de station manquant. Veuillez renseigner 12078440 dans la configuration de l\'équipement.');
-            return;
-        }
-
         // 1. Récupération du Token
-        log::add('jeedom_bourgeoisglobal', 'debug', '1. Vérification du Token d\'accès...');
         $token = $this->getApiToken($username, $password, $apiUrl);
         if (!$token) {
-            log::add('jeedom_bourgeoisglobal', 'error', 'Impossible d\'obtenir le Token. Abandon.');
+            log::add('jeedom_bourgeoisglobal', 'error', 'Impossible d\'obtenir le Token.');
             return;
         }
-        log::add('jeedom_bourgeoisglobal', 'debug', 'Token OK.');
 
-        // 2. Requête API de statut avec l'ID complet sous toutes les variantes de clés
-        $statusUrl = rtrim($apiUrl, '/') . '/platform/api/gateway/pvm/station_select_status';
-        log::add('jeedom_bourgeoisglobal', 'debug', 'Interrogation de l\'API pour l\'ID : ' . $stationId);
+        // 2. Test avec passage de l'ID en paramètre d'URL (GET) ou corps JSON enrichi
+        $statusUrl = rtrim($apiUrl, '/') . '/platform/api/gateway/pvm/station_select_status?swaggerId=' . $stationId . '&id=' . $stationId;
+        log::add('jeedom_bourgeoisglobal', 'debug', 'Interrogation URL : ' . $statusUrl);
 
         $payload = json_encode(array(
-            'id' => $stationId,
             'swaggerId' => $stationId,
-            'station_id' => $stationId
+            'id' => $stationId,
+            'stationId' => $stationId
         ));
 
         $ch = curl_init($statusUrl);
@@ -67,16 +60,12 @@ class jeedom_bourgeoisglobal extends eqLogic {
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
-        if (empty($response) || $httpCode != 200) {
-            log::add('jeedom_bourgeoisglobal', 'error', 'Erreur API - Code HTTP : ' . $httpCode . ' Réponse : ' . $response);
-            return;
-        }
+        log::add('jeedom_bourgeoisglobal', 'debug', 'Réponse HTTP ' . $httpCode . ' : ' . $response);
 
         $data = json_decode($response, true);
-        log::add('jeedom_bourgeoisglobal', 'debug', 'Réponse JSON brute : ' . print_r($data, true));
 
         if (!is_array($data) || !isset($data['data'])) {
-            log::add('jeedom_bourgeoisglobal', 'error', 'Format de données inattendu reçu du serveur.');
+            log::add('jeedom_bourgeoisglobal', 'error', 'Erreur API - Réponse invalide.');
             return;
         }
 
@@ -87,7 +76,6 @@ class jeedom_bourgeoisglobal extends eqLogic {
 
         $formattedDate = date('Y-m-d H:i:s');
 
-        // 4. Mise à jour des commandes
         $this->checkAndUpdateCmd('power_w', $powerW, $formattedDate);
         $this->checkAndUpdateCmd('energy_day', $energyDayKwh, $formattedDate);
         $this->checkAndUpdateCmd('energy_total', $energyTotalKwh, $formattedDate);
@@ -100,14 +88,10 @@ class jeedom_bourgeoisglobal extends eqLogic {
         $cachedToken = cache::byKey($cacheKey)->getValue(null);
 
         if ($cachedToken !== null && !empty($cachedToken)) {
-            log::add('jeedom_bourgeoisglobal', 'debug', '--> Utilisation du Token en cache (valide).');
             return $cachedToken;
         }
 
-        log::add('jeedom_bourgeoisglobal', 'info', '--> Aucun Token valide en cache. Nouvelle demande d\'authentification...');
-        
         $loginUrl = rtrim($_apiUrl, '/') . '/platform/api/gateway/iam/auth_login'; 
-        
         $payload = json_encode(array(
             'user_name' => $_username,
             'password' => md5($_password)
@@ -130,12 +114,11 @@ class jeedom_bourgeoisglobal extends eqLogic {
 
         if ($httpCode == 200 && isset($data['data']['token']) && !empty($data['data']['token'])) {
             $token = $data['data']['token'];
-            cache::set($cacheKey, $token, 86000); // Valide 24h
-            log::add('jeedom_bourgeoisglobal', 'debug', '--> Nouveau Token obtenu avec succès.');
+            cache::set($cacheKey, $token, 86000);
             return $token;
         }
 
-        log::add('jeedom_bourgeoisglobal', 'error', '--> Échec de l\'authentification ! Code HTTP : ' . $httpCode . ' Réponse : ' . $response);
+        log::add('jeedom_bourgeoisglobal', 'error', 'Échec authentification HTTP ' . $httpCode);
         return false;
     }
 
