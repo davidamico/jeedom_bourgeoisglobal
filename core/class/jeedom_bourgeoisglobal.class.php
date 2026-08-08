@@ -1,5 +1,5 @@
 <?php
-/* * Plugin Jeedom Bourgeois Global (Hoymiles)
+/* * Plugin Jeedom Bourgeois Global
  * Licence GNU AGPLv3
  */
 
@@ -35,15 +35,17 @@ class jeedom_bourgeoisglobal extends eqLogic {
         }
         log::add('jeedom_bourgeoisglobal', 'debug', 'Token OK.');
 
-        // 2. Requête API avec cURL natif
-        log::add('jeedom_bourgeoisglobal', 'debug', '2. Interrogation de l\'API Bourgeois Global / Hoymiles...');
-        $url = 'https://global.hoymiles.com/platform/api/gateway/pvm/station_select_status';
+        // 2. Requête API de statut
+        $apiUrl = $this->getConfiguration('api_base_url', 'https://global.hoymiles.com');
+        $statusUrl = rtrim($apiUrl, '/') . '/platform/api/gateway/pvm/station_select_status';
         
+        log::add('jeedom_bourgeoisglobal', 'debug', 'Interrogation de l\'API : ' . $statusUrl);
+
         $payload = json_encode(array(
             'station_id' => $stationId
         ));
 
-        $ch = curl_init($url);
+        $ch = curl_init($statusUrl);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");
         curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
@@ -73,7 +75,6 @@ class jeedom_bourgeoisglobal extends eqLogic {
         }
 
         // 3. Extraction des valeurs
-        log::add('jeedom_bourgeoisglobal', 'debug', '3. Extraction et mise à jour des commandes Jeedom...');
         $powerW = isset($data['data']['real_power']) ? floatval($data['data']['real_power']) : 0;
         $energyDayKwh = isset($data['data']['daily_eq']) ? floatval($data['data']['daily_eq']) : 0;
         $energyTotalKwh = isset($data['data']['total_eq']) ? floatval($data['data']['total_eq']) : 0;
@@ -98,8 +99,12 @@ class jeedom_bourgeoisglobal extends eqLogic {
         }
 
         log::add('jeedom_bourgeoisglobal', 'info', '--> Aucun Token valide en cache. Nouvelle demande d\'authentification en cours...');
-        $loginUrl = 'https://global.hoymiles.com/platform/api/gateway/iam/auth_login'; 
         
+        $apiUrl = $this->getConfiguration('api_base_url', 'https://global.hoymiles.com');
+        $loginUrl = rtrim($apiUrl, '/') . '/platform/api/gateway/iam/auth_login'; 
+        
+        log::add('jeedom_bourgeoisglobal', 'debug', 'URL de connexion testée : ' . $loginUrl);
+
         $payload = json_encode(array(
             'user_name' => $_username,
             'password' => md5($_password)
