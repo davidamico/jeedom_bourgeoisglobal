@@ -20,6 +20,7 @@ class jeedom_bourgeoisglobal extends eqLogic {
         $username = $this->getConfiguration('username');
         $password = $this->getConfiguration('password');
         $stationId = $this->getConfiguration('station_id'); 
+        $apiUrl = $this->getConfiguration('api_base_url', 'https://app.bourgeoisglobal.fr');
 
         if (empty($username) || empty($password)) {
             log::add('jeedom_bourgeoisglobal', 'error', 'Identifiants non configurés. Abandon.');
@@ -28,28 +29,27 @@ class jeedom_bourgeoisglobal extends eqLogic {
 
         // 1. Récupération du Token
         log::add('jeedom_bourgeoisglobal', 'debug', '1. Vérification du Token d\'accès...');
-        $token = $this->getApiToken($username, $password);
+        $token = $this->getApiToken($username, $password, $apiUrl);
         if (!$token) {
-            log::add('jeedom_bourgeoisglobal', 'error', 'Impossible d\'obtenir le Token. Abandon du rafraîchissement.');
+            log::add('jeedom_bourgeoisglobal', 'error', 'Impossible d\'obtenir le Token. Abandon.');
             return;
         }
         log::add('jeedom_bourgeoisglobal', 'debug', 'Token OK.');
 
-        // 2. Requête API de statut
-        $apiUrl = $this->getConfiguration('api_base_url', 'https://app.bourgeoisglobal.fr');
-        $statusUrl = rtrim($apiUrl, '/') . '/platform/api/gateway/pvm/station_select_status';
-        
-        log::add('jeedom_bourgeoisglobal', 'debug', 'Interrogation de l\'API : ' . $statusUrl);
-
-        // Construction du payload avec toutes les variantes de clés d'identification possibles
-        $payloadArray = array(
-            'station_id' => $stationId
-        );
-        if (!empty($stationId)) {
-            $payloadArray['swaggerId'] = $stationId;
-            $payloadArray['id'] = $stationId;
+        // 2. Si aucun ID de station n'est renseigné, on demande la liste des stations du compte
+        if (empty($stationId)) {
+            log::add('jeedom_bourgeoisglobal', 'info', 'Aucun ID de station renseigné. Récupération de la liste de vos installations...');
+            $this->fetchAndLogStations($token, $apiUrl);
+            return;
         }
-        $payload = json_encode($payloadArray);
+
+        // 3. Requête API de statut avec le swaggerId
+        $statusUrl = rtrim($apiUrl, '/') . '/platform/api/gateway/pvm/station_select_status';
+        log::add('jeedom_bourgeoisglobal', 'debug', 'Interrogation de l\'API pour le swaggerId : ' . $stationId);
+
+        $payload = json_encode(array(
+            'swaggerId' => $stationId
+        ));
 
         $ch = curl_init($statusUrl);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -80,14 +80,14 @@ class jeedom_bourgeoisglobal extends eqLogic {
             return;
         }
 
-        // 3. Extraction des valeurs
+        // 4. Extraction des valeurs
         $powerW = isset($data['data']['real_power']) ? floatval($data['data']['real_power']) : 0;
         $energyDayKwh = isset($data['data']['daily_eq']) ? floatval($data['data']['daily_eq']) : 0;
         $energyTotalKwh = isset($data['data']['total_eq']) ? floatval($data['data']['total_eq']) : 0;
 
         $formattedDate = date('Y-m-d H:i:s');
 
-        // 4. Mise à jour des commandes
+        // 5. Mise à jour des commandes
         $this->checkAndUpdateCmd('power_w', $powerW, $formattedDate);
         $this->checkAndUpdateCmd('energy_day', $energyDayKwh, $formattedDate);
         $this->checkAndUpdateCmd('energy_total', $energyTotalKwh, $formattedDate);
@@ -95,7 +95,40 @@ class jeedom_bourgeoisglobal extends eqLogic {
         log::add('jeedom_bourgeoisglobal', 'info', sprintf('Succès : Puissance = %s W | Prod. Jour = %s kWh', $powerW, $energyDayKwh));
     }
 
-    private function getApiToken($_username, $_password) {
+    private function fetchAndLogStations($_token, $_apiUrl) {
+        // Tentative d'interrogation de l'endpoint de liste des stations
+        $listEndpoints = array(
+            '/platform/api/gateway/pvm/station_list',
+            '/platform/api/gateway/pvm/station_page',
+            '/platform/api/gateway/pvm/user_station_list'
+        );
+
+        foreach ($listEndpoints as $endpoint) {
+            $url = rtrim($_apiUrl, '/') . $endpoint;
+            log::add('jeedom_bourgeoisglobal', 'info', 'Test de l\'endpoint de liste : ' . $url);
+
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "POST");
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(array()));
+            curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+                'Content-Type: application/json;charset=UTF-8',
+                'Cookie: WX-TOKEN=' . $_token
+            ));
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+
+            $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            log::add('jeedom_bourgeoisglobal', 'info', 'Code HTTP : ' . $httpCode . ' | Réponse : ' . $response);
+        }
+        log::add('jeedom_bourgeoisglobal', 'info', 'Veuillez consulter les lignes ci-dessus pour retrouver votre swaggerId / stationId, puis renseignez-le dans la configuration de l\'équipement.');
+    }
+
+    private function getApiToken($_username, $_password, $_apiUrl) {
         $cacheKey = 'jeedom_bourgeoisglobal_token_' . md5($_username);
         $cachedToken = cache::byKey($cacheKey)->getValue(null);
 
@@ -104,13 +137,10 @@ class jeedom_bourgeoisglobal extends eqLogic {
             return $cachedToken;
         }
 
-        log::add('jeedom_bourgeoisglobal', 'info', '--> Aucun Token valide en cache. Nouvelle demande d\'authentification en cours...');
+        log::add('jeedom_bourgeoisglobal', 'info', '--> Aucun Token valide en cache. Nouvelle demande d\'authentification...');
         
-        $apiUrl = $this->getConfiguration('api_base_url', 'https://app.bourgeoisglobal.fr');
-        $loginUrl = rtrim($apiUrl, '/') . '/platform/api/gateway/iam/auth_login'; 
+        $loginUrl = rtrim($_apiUrl, '/') . '/platform/api/gateway/iam/auth_login'; 
         
-        log::add('jeedom_bourgeoisglobal', 'debug', 'URL de connexion testée : ' . $loginUrl);
-
         $payload = json_encode(array(
             'user_name' => $_username,
             'password' => md5($_password)
@@ -134,7 +164,7 @@ class jeedom_bourgeoisglobal extends eqLogic {
         if ($httpCode == 200 && isset($data['data']['token']) && !empty($data['data']['token'])) {
             $token = $data['data']['token'];
             cache::set($cacheKey, $token, 86000); // Valide 24h
-            log::add('jeedom_bourgeoisglobal', 'debug', '--> Nouveau Token obtenu et mis en cache avec succès.');
+            log::add('jeedom_bourgeoisglobal', 'debug', '--> Nouveau Token obtenu avec succès.');
             return $token;
         }
 
